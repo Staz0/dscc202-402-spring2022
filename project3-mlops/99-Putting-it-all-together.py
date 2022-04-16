@@ -65,7 +65,13 @@ display(airbnbDF)
 
 # COMMAND ----------
 
-# TODO
+# # TODO
+# airbnbDF.withColumn("price",airbnbDF.price.cast('float'))
+airbnbDF['price'] = airbnbDF['price'].str.replace('$', '')
+airbnbDF["price"] = airbnbDF["price"].replace(",", "", regex=True)
+airbnbDF['price'] = airbnbDF['price'].astype(str).replace('\.00', '', regex=True)
+# airbnbDF['price'] = airbnbDF['price'].astype(int)
+airbnbDF['price'] = airbnbDF['price'].astype(float)
 
 # COMMAND ----------
 
@@ -77,6 +83,7 @@ display(airbnbDF)
 # COMMAND ----------
 
 # TODO
+airbnbDF = airbnbDF.drop(['host_is_superhost', 'cancellation_policy', 'instant_bookable', 'zipcode', 'neighbourhood_cleansed', 'property_type', 'bed_type', 'room_type'], axis = 1)
 
 # COMMAND ----------
 
@@ -86,7 +93,7 @@ display(airbnbDF)
 
 # COMMAND ----------
 
-# TODO
+airbnbDF = airbnbDF.dropna()
 
 # COMMAND ----------
 
@@ -99,7 +106,7 @@ display(airbnbDF)
 
 # TODO
 from sklearn.model_selection import train_test_split
-
+X_train, X_test, y_train, y_test = train_test_split(airbnbDF.drop(["price"], axis=1), airbnbDF[["price"]].values.ravel(), random_state=42)
 
 # COMMAND ----------
 
@@ -119,6 +126,12 @@ from sklearn.model_selection import train_test_split
 # COMMAND ----------
 
 # TODO
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+
+rf99 = RandomForestRegressor(n_estimators=100, max_depth=25)
+rf99.fit(X_train, y_train)
+
 
 # COMMAND ----------
 
@@ -128,6 +141,9 @@ from sklearn.model_selection import train_test_split
 # COMMAND ----------
 
 # TODO
+rf99_mse = mean_squared_error(y_test, rf99.predict(X_test))
+
+rf99_mse
 
 # COMMAND ----------
 
@@ -140,6 +156,12 @@ from sklearn.model_selection import train_test_split
 # TODO
 import mlflow.sklearn
 
+with mlflow.start_run(run_name="RF Model 99") as run: 
+    mlflow.sklearn.log_model(rf99, "random-forest-model-99")
+    mlflow.log_metric("mse", rf99_mse)
+  
+    experimentID = run.info.experiment_id
+    artifactURI = mlflow.get_artifact_uri()
 
 # COMMAND ----------
 
@@ -157,6 +179,14 @@ import mlflow.sklearn
 
 # TODO
 import mlflow.pyfunc
+
+from  mlflow.tracking import MlflowClient
+
+client = MlflowClient()
+rf99_run = sorted(client.list_run_infos(experimentID), key=lambda r: r.start_time, reverse=True)[0]
+rf99_path = rf99_run.artifact_uri+"/random-forest-model-preprocess/"
+
+rf99_pyfunc_model = mlflow.pyfunc.load_pyfunc(rf99_path.replace("dbfs:", "/dbfs"))
 
 # COMMAND ----------
 
@@ -180,10 +210,29 @@ class Airbnb_Model(mlflow.pyfunc.PythonModel):
 
     def __init__(self, model):
         self.model = model
+        
+    def preprocess_input(self, model_input):
+        #'''return pre-processed model_input'''
+        X_test["trunc_lat"] = X_test['latitude'].round(decimals=2)
+        X_test["trunc_long"] = X_test['longitude'].round(decimals=2)
+        X_test["review_scores_sum"] = X_test['review_scores_accuracy'] + X_test['review_scores_cleanliness'] + X_test['review_scores_checkin'] + X_test['review_scores_communication'] + X_test['review_scores_location'] + X_test['review_scores_value']
+        X_test = X_test.drop(['latitude', 'longitude'], axis=1)
+        return model_input
     
-    def predict(self, context, model_input):
+    def postprocess_result(self, results):
+#         '''return post-processed results
+#         Expensive: predicted price > 100
+#         Not Expensive: predicted price <= 100'''
         # FILL_IN
-
+        X_test['Expensive'] = loaded_preprocess_model.predict(X_test) > 100
+        X_test['Not_Expensive'] = loaded_preprocess_model.predict(X_test) <= 100
+        return results
+        
+    def predict(self, context, model_input):
+        processed_model_input = self.preprocess_input(model_input.copy())
+        results = self.rf.predict(processed_model_input)
+        return self.postprocess_result(results)
+    
 
 # COMMAND ----------
 
@@ -193,9 +242,12 @@ class Airbnb_Model(mlflow.pyfunc.PythonModel):
 # COMMAND ----------
 
 # TODO
-final_model_path =  f"{working_path}/final-model"
+final_model_path =  f"{working_path}/final-model3"
 
-# FILL_IN
+dbutils.fs.rm(final_model_path, True) # remove folder if already exists
+
+rf_postprocess_model = Airbnb_Model(model = rf99)
+mlflow.pyfunc.save_model(path=final_model_path.replace("dbfs:", "/dbfs"), python_model=rf_postprocess_model)
 
 # COMMAND ----------
 
@@ -204,7 +256,8 @@ final_model_path =  f"{working_path}/final-model"
 
 # COMMAND ----------
 
-# TODO
+loaded_postprocess_model = mlflow.pyfunc.load_pyfunc(final_model_path.replace("dbfs:", "/dbfs"))
+loaded_postprocess_model.predict(X_test)
 
 # COMMAND ----------
 
@@ -223,11 +276,14 @@ final_model_path =  f"{working_path}/final-model"
 # COMMAND ----------
 
 # TODO
-save the testing data 
+#save the testing data 
 test_data_path = f"{working_path}/test_data.csv"
 # FILL_IN
 
 prediction_path = f"{working_path}/predictions.csv"
+
+X_test.to_csv(test_data_path, index=False)
+loaded_postprocess_model.predict(X_test).to_csv(prediction_path, index=False)
 
 # COMMAND ----------
 
@@ -248,7 +304,9 @@ import pandas as pd
 @click.option("--test_data_path", default="", type=str)
 @click.option("--prediction_path", default="", type=str)
 def model_predict(final_model_path, test_data_path, prediction_path):
-    # FILL_IN
+    rf99 = RandomForestRegressor()
+    rf99.fit(X_train, y_train)
+    predictions = rf.predict(X_test)
 
 
 # test model_predict function    

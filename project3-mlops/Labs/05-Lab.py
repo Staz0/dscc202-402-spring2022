@@ -88,23 +88,25 @@ df.iloc[:10]
 
 # COMMAND ----------
 
+#'review_scores_accuracy', 'review_scores_cleanliness', 'review_scores_checkin', 'review_scores_communication', 'review_scores_location', and 'review_scores_value' 
+
 # TODO
 # new random forest model
 rf2 = RandomForestRegressor(n_estimators=100, max_depth=25)
 
 # pre-process train data
 X_train_processed = X_train.copy()
-X_train_processed["trunc_lat"] = #FILL_IN
-X_train_processed["trunc_long"] = #FILL_IN
-X_train_processed["review_scores_sum"] = #FILL_IN
-X_train_processed = X_train_processed.drop(FILL_IN, axis=1)
+X_train_processed["trunc_lat"] = X_train_processed['latitude'].round(decimals=2)
+X_train_processed["trunc_long"] = X_train_processed['longitude'].round(decimals=2)
+X_train_processed["review_scores_sum"] = X_train_processed['review_scores_accuracy'] + X_train_processed['review_scores_cleanliness'] + X_train_processed['review_scores_checkin'] + X_train_processed['review_scores_communication'] + X_train_processed['review_scores_location'] + X_train_processed['review_scores_value']
+X_train_processed = X_train_processed.drop(['latitude', 'longitude'], axis=1)
 
 # pre-process test data to obtain MSE
 X_test_processed = X_test.copy()
-X_test_processed["trunc_lat"] = #FILL_IN
-X_test_processed["trunc_long"] = #FILL_IN
-X_test_processed["review_scores_sum"] = #FILL_IN
-X_test_processed = X_test_processed.drop(FILL_IN, axis=1)
+X_test_processed["trunc_lat"] = X_test_processed['latitude'].round(decimals=2)
+X_test_processed["trunc_long"] = X_test_processed['longitude'].round(decimals=2)
+X_test_processed["review_scores_sum"] = X_test_processed['review_scores_accuracy'] + X_test_processed['review_scores_cleanliness'] + X_test_processed['review_scores_checkin'] + X_test_processed['review_scores_communication'] + X_test_processed['review_scores_location'] + X_test_processed['review_scores_value']
+X_test_processed = X_test_processed.drop(['latitude', 'longitude'], axis=1)
 
 
 # fit and evaluate new rf model
@@ -186,8 +188,11 @@ class RF_with_preprocess(mlflow.pyfunc.PythonModel):
 
     def preprocess_input(self, model_input):
         '''return pre-processed model_input'''
-        # FILL_IN
-        return
+        X_test["trunc_lat"] = X_test['latitude'].round(decimals=2)
+        X_test["trunc_long"] = X_test['longitude'].round(decimals=2)
+        X_test["review_scores_sum"] = X_test['review_scores_accuracy'] + X_test['review_scores_cleanliness'] + X_test['review_scores_checkin'] + X_test['review_scores_communication'] + X_test['review_scores_location'] + X_test['review_scores_value']
+        X_test = X_test.drop(['latitude', 'longitude'], axis=1)
+        return model_input
     
     def predict(self, context, model_input):
         processed_model_input = self.preprocess_input(model_input.copy())
@@ -203,6 +208,8 @@ class RF_with_preprocess(mlflow.pyfunc.PythonModel):
 # Construct and save the model
 model_path =  f"{workingDir}/RF_with_preprocess/"
 dbutils.fs.rm(model_path, True) # remove folder if already exists
+
+# COMMAND ----------
 
 rf_preprocess_model = RF_with_preprocess(trained_rf = rf2)
 mlflow.pyfunc.save_model(path=model_path.replace("dbfs:", "/dbfs"), python_model=rf_preprocess_model)
@@ -239,16 +246,21 @@ class RF_with_postprocess(mlflow.pyfunc.PythonModel):
         self.rf = trained_rf
 
     def preprocess_input(self, model_input):
-        '''return pre-processed model_input'''
-        # FILL_IN
-        return 
+        #'''return pre-processed model_input'''
+        X_test["trunc_lat"] = X_test['latitude'].round(decimals=2)
+        X_test["trunc_long"] = X_test['longitude'].round(decimals=2)
+        X_test["review_scores_sum"] = X_test['review_scores_accuracy'] + X_test['review_scores_cleanliness'] + X_test['review_scores_checkin'] + X_test['review_scores_communication'] + X_test['review_scores_location'] + X_test['review_scores_value']
+        X_test = X_test.drop(['latitude', 'longitude'], axis=1)
+        return model_input
       
     def postprocess_result(self, results):
-        '''return post-processed results
-        Expensive: predicted price > 100
-        Not Expensive: predicted price <= 100'''
+#         '''return post-processed results
+#         Expensive: predicted price > 100
+#         Not Expensive: predicted price <= 100'''
         # FILL_IN
-        return 
+        X_test['Expensive'] = loaded_preprocess_model.predict(X_test) > 100
+        X_test['Not_Expensive'] = loaded_preprocess_model.predict(X_test) <= 100
+        return results
     
     def predict(self, context, model_input):
         processed_model_input = self.preprocess_input(model_input.copy())
@@ -266,6 +278,8 @@ class RF_with_postprocess(mlflow.pyfunc.PythonModel):
 model_path =  f"{workingDir}/RF_with_postprocess/"
 
 dbutils.fs.rm(model_path, True) # remove folder if already exists
+
+# COMMAND ----------
 
 rf_postprocess_model = RF_with_postprocess(trained_rf = rf2)
 mlflow.pyfunc.save_model(path=model_path.replace("dbfs:", "/dbfs"), python_model=rf_postprocess_model)
